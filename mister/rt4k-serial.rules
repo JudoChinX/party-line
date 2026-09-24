@@ -1,0 +1,14 @@
+# RetroTINK 4K serial link. The RT4K's USB port is an FTDI FT232R (0403:6001)
+# that the kernel names /dev/ttyUSB<n>. Zaparoo's reader auto-detect opens
+# every /dev/ttyUSB* and /dev/ttyACM* once a second at 115200 8N1, writes a
+# PN532 wake-up frame into it and closes it. That resets the line speed under
+# any other process using the port and wedges the RT4K's command parser.
+# Zaparoo only skips a hard-coded list of vid:pids, so the fix is to take the
+# node out of its name search: rename it to /dev/rt4k-serial. udev cannot NAME=
+# a tty, so this is a RUN.
+#
+# Installed into /run/udev/rules.d (tmpfs) at every boot by the retrothink
+# block in /media/fat/linux/user-startup.sh, because the MiSTer's / is
+# read-only. Matches vid:pid only, so a replacement RT4K needs no edit.
+# Harmless without Zaparoo. See docs/zaparoo.md.
+ACTION=="add", SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", RUN+="/bin/mv /dev/%k /dev/rt4k-serial"
