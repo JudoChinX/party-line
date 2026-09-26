@@ -1,0 +1,1 @@
+"""Tests for Saturday Serial."""
