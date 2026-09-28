@@ -43,6 +43,7 @@ jobs:
       - name: yamllint
         run: yamllint .
 
+      # The runner's own shellcheck, preinstalled on ubuntu-latest, not a pip package.
       - name: shellcheck
         run: shellcheck -s sh install.sh mister/*.sh utils/pre-push.sh
 
