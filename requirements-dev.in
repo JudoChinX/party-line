@@ -1,0 +1,10 @@
+# Edited by hand. requirements-dev.txt is generated from this file, with
+# hashes, for Python 3.13: after any change, re-run the command in its
+# header and commit both files.
+bandit>=1.9.4
+mypy>=2.3.1
+pylint>=4.0.5
+pytest>=8.3.4
+pytest-cov>=6.0.0
+ruff>=0.16.9
+yamllint>=1.35.1
