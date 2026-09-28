@@ -6,3 +6,6 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+
+# Design notes and plans are kept outside the repository
+docs/*/
