@@ -4,5 +4,4 @@ pylint>=4.0.5
 pytest>=8.3.4
 pytest-cov>=6.0.0
 ruff>=0.16.9
-shellcheck-py>=0.10.0.1
 yamllint>=1.35.1

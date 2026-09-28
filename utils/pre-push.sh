@@ -5,6 +5,15 @@ set -e
 
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
+
+# The system shellcheck, not a pip package: look it up before the venv
+# goes on PATH, so a stale shellcheck-py in the venv can't shadow it.
+shellcheck_bin="$(command -v shellcheck || true)"
+if [ -z "$shellcheck_bin" ]; then
+    echo "ERROR: shellcheck not found. Install it from your system package manager (apt install shellcheck)."
+    exit 1
+fi
+
 # shellcheck disable=SC1091
 . .venv/bin/activate
 
@@ -29,7 +38,7 @@ run pylint party_line/ tests/
 run mypy party_line/ tests/
 run bandit -q -r party_line/ -lll
 run yamllint .
-run shellcheck -s sh install.sh mister/user-startup.udev.sh mister/user-startup.watch.sh utils/pre-push.sh
+run "$shellcheck_bin" -s sh install.sh mister/user-startup.udev.sh mister/user-startup.watch.sh utils/pre-push.sh
 run pytest -q
 
 echo ""
