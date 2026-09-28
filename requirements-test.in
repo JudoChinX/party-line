@@ -1,0 +1,5 @@
+# Edited by hand. requirements-test.txt is generated from this file, with
+# hashes, for Python 3.9 and later: after any change, re-run the command in its
+# header and commit both files.
+pytest>=8.3.4
+pytest-cov>=6.0.0

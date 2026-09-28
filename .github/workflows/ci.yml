@@ -23,7 +23,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dev tools
-        run: pip install -r requirements-dev.txt
+        run: pip install --require-hashes -r requirements-dev.txt
 
       - name: ruff check
         run: ruff check .
@@ -64,7 +64,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install test tools
-        run: pip install -r requirements-test.txt
+        run: pip install --require-hashes -r requirements-test.txt
 
       - name: pytest
         run: pytest
