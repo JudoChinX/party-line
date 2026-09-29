@@ -9,6 +9,8 @@ from party_line import commands
 _render_cases = {
     'ver': {'name': 'ver', 'value': None, 'expected': 'ver'},
     'profile': {'name': 'profile', 'value': None, 'expected': 'prof get'},
+    'load_with_spaces': {'name': 'load', 'value': '_CRT/JVC D200.rt4', 'expected': 'prof load _CRT/JVC D200.rt4'},
+    'load_upper_suffix': {'name': 'load', 'value': 'DV1/SNES.RT4', 'expected': 'prof load DV1/SNES.RT4'},
     'get': {'name': 'get', 'value': '/profile/DV1/MENU.rt4', 'expected': 'get -- /profile/DV1/MENU.rt4'},
     'ls': {'name': 'ls', 'value': '/profile', 'expected': 'ls /profile'},
     'remote': {'name': 'remote', 'value': 'menu', 'expected': 'remote menu'},
@@ -16,11 +18,17 @@ _render_cases = {
 }
 
 _refuse_cases = {
+    'crlf_injection': {'name': 'load', 'value': 'DV1/A.rt4\rrm /x'},
     'newline_injection': {'name': 'stat', 'value': '/a\nrm /b'},
     'tab': {'name': 'stat', 'value': '/a\tb'},
+    'dotdot': {'name': 'load', 'value': '../x.rt4'},
     'dotdot_middle': {'name': 'stat', 'value': '/profile/../x'},
     'dotdot_backslash': {'name': 'get', 'value': '/profile\\..\\x'},
+    'too_long': {'name': 'load', 'value': 'a' * 197 + '.rt4'},
     'empty': {'name': 'stat', 'value': ''},
+    'non_ascii': {'name': 'load', 'value': 'DV1/é.rt4'},
+    'load_absolute': {'name': 'load', 'value': '/profile/DV1/A.rt4'},
+    'load_wrong_suffix': {'name': 'load', 'value': 'DV1/A.txt'},
     'card_relative': {'name': 'stat', 'value': 'profile/A.rt4'},
     'card_space': {'name': 'ls', 'value': '/_CRT Emulation'},
     'unknown_key': {'name': 'remote', 'value': 'rm'},
@@ -121,6 +129,7 @@ _parse_cases = {
         'expected': {'entries': [{'t': 'F', 'sz': '9', 'mt': '2', 'nm': 'A.rt4'}], 'count': 1, 'truncated': True},
     },
     'remote': {'name': 'remote', 'lines': ['Serial Remote: menu'], 'expected': {'key': 'menu'}},
+    'load': {'name': 'load', 'lines': ['prof load ok'], 'expected': {}},
 }
 
 
@@ -168,3 +177,10 @@ def test_parse_file() -> None:
         'sha256': '8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4',
         'content_base64': 'aGk=',
     }
+
+
+def test_only_load_expects_an_acknowledgement_and_echoes_its_argument() -> None:
+    """Test 'prof load' is the one row whose reply must contain a fixed line, and that repeats its path."""
+    assert [(command.name, command.expect, command.echo) for command in commands.COMMANDS if command.expect] == [
+        ('load', 'prof load ok', 'profile')
+    ]
