@@ -32,6 +32,7 @@ REMOTE_KEYS = frozenset(
     + [f'prof{number}' for number in range(1, 13)]
     + [f'res{number}' for number in range(1, 5)]
 )
+SESSION_WORDS = frozenset(['baud'])
 
 Data = dict[str, Any]
 Parser = Callable[..., Data]
@@ -351,3 +352,12 @@ COMMANDS = (
     Command('wake', 'pwr on', KIND_TEXT, 'Wake the unit from sleep.', parse_nothing, bad_command_ok=True),
 )
 BY_NAME = {command.name: command for command in COMMANDS}
+
+
+def wire_words() -> frozenset[str]:
+    """Every first word party_line can ever write to the tty.
+
+    Returns:
+        The first word of each command's wire text, plus the session's own.
+    """
+    return frozenset(command.wire.split()[0] for command in COMMANDS) | SESSION_WORDS
