@@ -51,6 +51,22 @@ def parse_fields(lines: list[str]) -> Data:
     return data
 
 
+def parse_input(lines: list[str]) -> Data:
+    """Parse 'input=0 HDMI ic=2 model=0'.
+
+    Args:
+        lines: Reply lines, prefixes stripped.
+
+    Returns:
+        The key=value fields, plus the bare words as 'name' when there are any.
+    """
+    data = parse_fields(lines)
+    words = [word for line in lines for word in line.split() if '=' not in word]
+    if words:
+        data['name'] = ' '.join(words)
+    return data
+
+
 def parse_ver(lines: list[str]) -> Data:
     """Parse 'RT4KPRO, FW Version: 1.86.0' and 'Build tag: b0817c'.
 
@@ -118,5 +134,7 @@ class Command:
 COMMANDS = (
     Command('ver', 'ver', KIND_TEXT, 'Firmware version and build tag.', parse_ver),
     Command('profile', 'prof get', KIND_TEXT, 'The profile currently loaded.', parse_fields),
+    Command('input', 'input', KIND_TEXT, 'The selected input.', parse_input),
+    Command('output', 'output', KIND_TEXT, 'The selected output.', parse_fields),
 )
 BY_NAME = {command.name: command for command in COMMANDS}

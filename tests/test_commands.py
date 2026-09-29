@@ -58,6 +58,21 @@ _parse_cases = {
         'lines': ['prof loaded=1 dir=/profile file=_CRT Emulation/JVC D200.rt4'],
         'expected': {'loaded': '1', 'dir': '/profile', 'file': '_CRT Emulation/JVC D200.rt4'},
     },
+    'input': {
+        'name': 'input',
+        'lines': ['input=0 HDMI ic=2 model=0'],
+        'expected': {'input': '0', 'name': 'HDMI', 'ic': '2', 'model': '0'},
+    },
+    'input_without_a_name': {
+        'name': 'input',
+        'lines': ['input=0 ic=2 model=0'],
+        'expected': {'input': '0', 'ic': '2', 'model': '0'},
+    },
+    'output': {
+        'name': 'output',
+        'lines': ['output sel=0 live=0 model=0'],
+        'expected': {'sel': '0', 'live': '0', 'model': '0'},
+    },
 }
 
 
