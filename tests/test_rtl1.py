@@ -29,3 +29,33 @@ def test_encode_frame_refuses_oversize_payload() -> None:
     """Test a payload over 2048 bytes is refused."""
     with pytest.raises(ValueError):
         rtl1.encode_frame(1, rtl1.TYPE_DATA, 0, bytes(rtl1.MAX_PAYLOAD + 1))
+
+
+def test_decoder_round_trip_across_split_reads() -> None:
+    """Test frames split at every byte boundary still decode."""
+    blob = rtl1.encode_frame(7, rtl1.TYPE_DATA, 0, b'hello') + rtl1.encode_frame(7, rtl1.TYPE_RESPONSE, 1, b'x')
+    decoder = rtl1.Decoder()
+    frames = []
+    for index in range(len(blob)):
+        frames += decoder.feed(blob[index : index + 1])
+    assert [(frame.kind, frame.seq, frame.payload, frame.crc_ok) for frame in frames] == [
+        (rtl1.TYPE_DATA, 0, b'hello', True),
+        (rtl1.TYPE_RESPONSE, 1, b'x', True),
+    ]
+
+
+def test_decoder_skips_noise_and_flags_bad_crc() -> None:
+    """Test leading garbage is skipped and a corrupted CRC is reported, not hidden."""
+    frame = bytearray(rtl1.encode_frame(1, rtl1.TYPE_DATA, 0, b'data'))
+    frame[-1] ^= 0xFF
+    frames = rtl1.Decoder().feed(b'garbage\xa5' + bytes(frame))
+    assert len(frames) == 1
+    assert frames[0].crc_ok is False
+
+
+def test_decoder_keeps_a_trailing_half_magic() -> None:
+    """Test a buffer ending in 0xA5 keeps it for the next read."""
+    decoder = rtl1.Decoder()
+    frame = rtl1.encode_frame(3, rtl1.TYPE_DATA, 0, b'z')
+    assert not decoder.feed(b'noise' + frame[:1])
+    assert [found.payload for found in decoder.feed(frame[1:])] == [b'z']
