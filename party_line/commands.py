@@ -23,6 +23,7 @@ LISTING_ENTRY = 'ent '
 LISTING_TRUNCATED = 'ls truncated'
 MAX_NUMBER_DIGITS = 9
 MAX_PATH_LENGTH = 200
+PROFILE_SUFFIX = '.rt4'
 REMOTE_KEYS = frozenset(
     ['adc', 'aud', 'back', 'buffer', 'col', 'diag', 'down', 'gain', 'genlock', 'input', 'left', 'menu', 'ok']
     + ['output', 'pause', 'phase', 'prof', 'pwr', 'res1080p', 'res1440p', 'res480p', 'res4k', 'right', 'safe']
@@ -133,6 +134,18 @@ def parse_listing(lines: list[str]) -> Data:
     return {'entries': entries, 'count': len(entries), 'truncated': truncated}
 
 
+def parse_nothing(_lines: list[str]) -> Data:
+    """Parse a reply that carries no fields.
+
+    Args:
+        _lines: Reply lines; unused.
+
+    Returns:
+        An empty dict.
+    """
+    return {}
+
+
 def parse_osd(data: bytes, ready: dict[str, str]) -> Data:
     """Turn an osd download (character cells, then colours) into text rows.
 
@@ -208,6 +221,22 @@ def validate_card_path(path: str) -> None:
         raise ValidationError(f'card paths may not contain spaces: {path!r}')
 
 
+def validate_profile_path(path: str) -> None:
+    """Accept a profile path relative to /profile, ending in .rt4.
+
+    Args:
+        path: The path as typed, e.g. 'DV1/MENU.rt4'. Spaces are allowed.
+
+    Raises:
+        ValidationError: If the path is unsafe to put on the wire.
+    """
+    _check_path(path)
+    if path.startswith('/'):
+        raise ValidationError(f'profile paths are relative to /profile: {path!r}')
+    if not path.lower().endswith(PROFILE_SUFFIX):
+        raise ValidationError(f'profile paths end in {PROFILE_SUFFIX}: {path!r}')
+
+
 def validate_remote_key(key: str) -> None:
     """Accept only a documented remote-control button name.
 
@@ -234,6 +263,8 @@ class Command:
             listing rows, (bytes, ready-line fields) for downloads. Pure.
         arg: The argument's metavar, or None when the command takes none.
         validate: Checks the argument; required when arg is set.
+        expect: A reply line must start with this, or the RT4K refused.
+        echo: The data key that repeats the argument back, for replies that don't.
     """
 
     name: str
@@ -243,6 +274,8 @@ class Command:
     parse: Parser
     arg: Optional[str] = None
     validate: Optional[Callable[[str], None]] = None
+    expect: Optional[str] = None
+    echo: Optional[str] = None
 
     def render(self, value: Optional[str] = None) -> str:
         """Build the exact text sent to the RT4K, validating the argument first.
@@ -301,6 +334,17 @@ COMMANDS = (
         parse_remote,
         'KEY',
         validate_remote_key,
+    ),
+    Command(
+        'load',
+        'prof load {}',
+        KIND_TEXT,
+        'Load a profile, relative to /profile.',
+        parse_nothing,
+        'PROFILE',
+        validate_profile_path,
+        expect='prof load ok',
+        echo='profile',
     ),
 )
 BY_NAME = {command.name: command for command in COMMANDS}
