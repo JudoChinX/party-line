@@ -124,6 +124,33 @@ def test_parse(name: str, lines: list[str], expected: dict[str, object]) -> None
     assert commands.BY_NAME[name].parse(lines) == expected
 
 
+def test_osd_rows_use_stride_and_mark_non_printables() -> None:
+    """Test rows are cut by stride, trimmed to width, NUL is a space and others a dot."""
+    cells = b'AB\x00\x01' + b'zz' + b'CD' + b'\x00' * 4
+    assert commands.parse_osd(cells, {'rows': '2', 'width': '4', 'stride': '6'}) == {'rows': ['AB .', 'CD']}
+
+
+_garbled_osd_cases = {
+    'rows_not_a_number': {'rows': 'x', 'width': '2', 'stride': '2'},
+    'rows_superscript_digit': {'rows': '\u00b2', 'width': '2', 'stride': '2'},
+    'rows_too_long': {'rows': '9' * 5000, 'width': '2', 'stride': '2'},
+    'stride_not_a_number': {'rows': '2', 'width': '2', 'stride': 'x'},
+    'width_missing': {'rows': '2', 'stride': '2'},
+    'width_over_stride': {'rows': '2', 'width': '4', 'stride': '2'},
+}
+
+
+@pytest.mark.parametrize('ready', list(_garbled_osd_cases.values()), ids=list(_garbled_osd_cases))
+def test_osd_with_a_garbled_ready_line_has_no_rows(ready: dict[str, str]) -> None:
+    """Test missing or garbled geometry gives no rows instead of raising or repeating a row."""
+    assert commands.parse_osd(b'ABCD', ready) == {'rows': []}
+
+
+def test_osd_never_has_more_rows_than_the_data() -> None:
+    """Test a row count beyond the data is cut to the rows the data holds."""
+    assert commands.parse_osd(b'ABCDE', {'rows': '9', 'width': '2', 'stride': '2'}) == {'rows': ['AB', 'CD', 'E']}
+
+
 def test_parse_file() -> None:
     """Test get's data describes the bytes: size, SHA-256 and base64."""
     assert commands.BY_NAME['get'].parse(b'hi', {}) == {
