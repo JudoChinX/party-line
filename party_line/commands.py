@@ -23,6 +23,14 @@ LISTING_ENTRY = 'ent '
 LISTING_TRUNCATED = 'ls truncated'
 MAX_NUMBER_DIGITS = 9
 MAX_PATH_LENGTH = 200
+REMOTE_KEYS = frozenset(
+    ['adc', 'aud', 'back', 'buffer', 'col', 'diag', 'down', 'gain', 'genlock', 'input', 'left', 'menu', 'ok']
+    + ['output', 'pause', 'phase', 'prof', 'pwr', 'res1080p', 'res1440p', 'res480p', 'res4k', 'right', 'safe']
+    + ['scaler', 'sfx', 'stat', 'up']
+    + [f'aux{number}' for number in range(1, 9)]
+    + [f'prof{number}' for number in range(1, 13)]
+    + [f'res{number}' for number in range(1, 5)]
+)
 
 Data = dict[str, Any]
 Parser = Callable[..., Data]
@@ -32,6 +40,7 @@ _FIELD = re.compile(r'(\w+)=(\S+)')
 _PATH_FIELD = re.compile(r'\b(file|nm)=(.*\S)')
 _PRINTABLE_CELLS = range(32, 127)
 _PRINTABLE_PATH = re.compile(r'[\x20-\x7e]{1,%d}' % MAX_PATH_LENGTH)
+_REMOTE = re.compile(r'Serial Remote: (\S+)')
 _SEPARATORS = re.compile(r'[/\\]')
 _VERSION = re.compile(r'(.+?), FW Version: (\S+)')
 
@@ -147,6 +156,23 @@ def parse_osd(data: bytes, ready: dict[str, str]) -> Data:
     return {'rows': text}
 
 
+def parse_remote(lines: list[str]) -> Data:
+    """Parse 'Serial Remote: <key>'.
+
+    Args:
+        lines: Reply lines, prefixes stripped.
+
+    Returns:
+        key, the button the firmware says it pressed.
+    """
+    data: Data = {}
+    for line in lines:
+        match = _REMOTE.match(line)
+        if match:
+            data['key'] = match.group(1)
+    return data
+
+
 def parse_ver(lines: list[str]) -> Data:
     """Parse 'RT4KPRO, FW Version: 1.86.0' and 'Build tag: b0817c'.
 
@@ -180,6 +206,19 @@ def validate_card_path(path: str) -> None:
         raise ValidationError(f'card paths start with "/": {path!r}')
     if ' ' in path:
         raise ValidationError(f'card paths may not contain spaces: {path!r}')
+
+
+def validate_remote_key(key: str) -> None:
+    """Accept only a documented remote-control button name.
+
+    Args:
+        key: The button, e.g. 'menu'.
+
+    Raises:
+        ValidationError: If the key is not a documented button.
+    """
+    if key not in REMOTE_KEYS:
+        raise ValidationError(f'unknown remote key: {key!r}')
 
 
 @dataclass(frozen=True)
@@ -253,6 +292,15 @@ COMMANDS = (
         parse_file,
         'PATH',
         validate_card_path,
+    ),
+    Command(
+        'remote',
+        'remote {}',
+        KIND_TEXT,
+        'Press one remote button (pwr = sleep).',
+        parse_remote,
+        'KEY',
+        validate_remote_key,
     ),
 )
 BY_NAME = {command.name: command for command in COMMANDS}
