@@ -11,6 +11,8 @@ _render_cases = {
     'profile': {'name': 'profile', 'value': None, 'expected': 'prof get'},
     'get': {'name': 'get', 'value': '/profile/DV1/MENU.rt4', 'expected': 'get -- /profile/DV1/MENU.rt4'},
     'ls': {'name': 'ls', 'value': '/profile', 'expected': 'ls /profile'},
+    'remote': {'name': 'remote', 'value': 'menu', 'expected': 'remote menu'},
+    'remote_aux8': {'name': 'remote', 'value': 'aux8', 'expected': 'remote aux8'},
 }
 
 _refuse_cases = {
@@ -21,6 +23,7 @@ _refuse_cases = {
     'empty': {'name': 'stat', 'value': ''},
     'card_relative': {'name': 'stat', 'value': 'profile/A.rt4'},
     'card_space': {'name': 'ls', 'value': '/_CRT Emulation'},
+    'unknown_key': {'name': 'remote', 'value': 'rm'},
     'missing_arg': {'name': 'stat', 'value': None},
     'unexpected_arg': {'name': 'ver', 'value': 'x'},
 }
@@ -50,6 +53,12 @@ def test_render_refuses(name: str, value: str) -> None:
 def test_every_argument_row_has_a_validator() -> None:
     """Test no row can put an unchecked argument on the wire."""
     assert all(command.validate is not None for command in commands.COMMANDS if command.arg is not None)
+
+
+def test_remote_keys_are_documented_buttons() -> None:
+    """Test the key set is the 52 documented buttons."""
+    assert len(commands.REMOTE_KEYS) == 52
+    assert {'menu', 'pwr', 'prof12', 'aux8', 'res4'} <= commands.REMOTE_KEYS
 
 
 _parse_cases = {
@@ -111,6 +120,7 @@ _parse_cases = {
         'lines': ['ent t=F sz=9 mt=2 nm=A.rt4', 'ls truncated at 512', 'ls end 512'],
         'expected': {'entries': [{'t': 'F', 'sz': '9', 'mt': '2', 'nm': 'A.rt4'}], 'count': 1, 'truncated': True},
     },
+    'remote': {'name': 'remote', 'lines': ['Serial Remote: menu'], 'expected': {'key': 'menu'}},
 }
 
 
