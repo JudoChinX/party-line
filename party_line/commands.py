@@ -8,12 +8,15 @@ command.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import re
 from dataclasses import dataclass
 from typing import Any
 from typing import Callable
 from typing import Optional
 
+KIND_DOWNLOAD = 'download'
 KIND_LISTING = 'listing'
 KIND_TEXT = 'text'
 LISTING_ENTRY = 'ent '
@@ -63,6 +66,23 @@ def parse_fields(lines: list[str]) -> Data:
     for line in lines:
         data.update(_fields(line))
     return data
+
+
+def parse_file(data: bytes, _ready: dict[str, str]) -> Data:
+    """Describe a downloaded file.
+
+    Args:
+        data: The file's bytes, already checked against the firmware's SHA-256.
+        _ready: The ready line's fields; unused.
+
+    Returns:
+        size, sha256 (hex) and content_base64.
+    """
+    return {
+        'size': len(data),
+        'sha256': hashlib.sha256(data).hexdigest(),
+        'content_base64': base64.b64encode(data).decode('ascii'),
+    }
 
 
 def parse_input(lines: list[str]) -> Data:
@@ -192,6 +212,15 @@ COMMANDS = (
     ),
     Command(
         'stat', 'stat {}', KIND_TEXT, 'Size and time of a file on the card.', parse_fields, 'PATH', validate_card_path
+    ),
+    Command(
+        'get',
+        'get -- {}',
+        KIND_DOWNLOAD,
+        'Copy a file from the card to stdout.',
+        parse_file,
+        'PATH',
+        validate_card_path,
     ),
 )
 BY_NAME = {command.name: command for command in COMMANDS}
