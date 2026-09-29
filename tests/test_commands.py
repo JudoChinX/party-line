@@ -9,6 +9,7 @@ from party_line import commands
 _render_cases = {
     'ver': {'name': 'ver', 'value': None, 'expected': 'ver'},
     'profile': {'name': 'profile', 'value': None, 'expected': 'prof get'},
+    'ls': {'name': 'ls', 'value': '/profile', 'expected': 'ls /profile'},
 }
 
 _refuse_cases = {
@@ -17,6 +18,7 @@ _refuse_cases = {
     'dotdot_middle': {'name': 'stat', 'value': '/profile/../x'},
     'empty': {'name': 'stat', 'value': ''},
     'card_relative': {'name': 'stat', 'value': 'profile/A.rt4'},
+    'card_space': {'name': 'ls', 'value': '/_CRT Emulation'},
     'missing_arg': {'name': 'stat', 'value': None},
     'unexpected_arg': {'name': 'ver', 'value': 'x'},
 }
@@ -90,6 +92,23 @@ _parse_cases = {
         'expected': {'t': 'F', 'sz': '23040', 'mt': '1577836800', 'at': '0x20', 'nm': '/profile/DV1/MENU.rt4'},
     },
     'stat_error': {'name': 'stat', 'lines': ['stat err=2 NOSUCH'], 'expected': {'err': '2'}},
+    'ls': {
+        'name': 'ls',
+        'lines': ['ent t=D sz=0 mt=1 nm=DV1', 'ent t=F sz=9 mt=2 nm=JVC D200.rt4', 'ls end 2'],
+        'expected': {
+            'entries': [
+                {'t': 'D', 'sz': '0', 'mt': '1', 'nm': 'DV1'},
+                {'t': 'F', 'sz': '9', 'mt': '2', 'nm': 'JVC D200.rt4'},
+            ],
+            'count': 2,
+            'truncated': False,
+        },
+    },
+    'ls_truncated': {
+        'name': 'ls',
+        'lines': ['ent t=F sz=9 mt=2 nm=A.rt4', 'ls truncated at 512', 'ls end 512'],
+        'expected': {'entries': [{'t': 'F', 'sz': '9', 'mt': '2', 'nm': 'A.rt4'}], 'count': 1, 'truncated': True},
+    },
 }
 
 
