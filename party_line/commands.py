@@ -21,6 +21,7 @@ KIND_LISTING = 'listing'
 KIND_TEXT = 'text'
 LISTING_ENTRY = 'ent '
 LISTING_TRUNCATED = 'ls truncated'
+MAX_NUMBER_DIGITS = 9
 MAX_PATH_LENGTH = 200
 
 Data = dict[str, Any]
@@ -29,6 +30,7 @@ Parser = Callable[..., Data]
 _BUILD = re.compile(r'Build tag: (\S+)')
 _FIELD = re.compile(r'(\w+)=(\S+)')
 _PATH_FIELD = re.compile(r'\b(file|nm)=(.*\S)')
+_PRINTABLE_CELLS = range(32, 127)
 _PRINTABLE_PATH = re.compile(r'[\x20-\x7e]{1,%d}' % MAX_PATH_LENGTH)
 _SEPARATORS = re.compile(r'[/\\]')
 _VERSION = re.compile(r'(.+?), FW Version: (\S+)')
@@ -51,6 +53,12 @@ def _fields(line: str) -> Data:
     fields: Data = dict(_FIELD.findall(line))
     fields.update(_PATH_FIELD.findall(line))
     return fields
+
+
+def _number(fields: dict[str, str], key: str) -> int:
+    """A ready-line field as a number, or 0 when the firmware left it out or garbled it."""
+    value = fields.get(key, '')
+    return int(value) if value.isdecimal() and len(value) <= MAX_NUMBER_DIGITS else 0
 
 
 def parse_fields(lines: list[str]) -> Data:
@@ -114,6 +122,29 @@ def parse_listing(lines: list[str]) -> Data:
     entries = [_fields(line) for line in lines if line.startswith(LISTING_ENTRY)]
     truncated = any(line.startswith(LISTING_TRUNCATED) for line in lines)
     return {'entries': entries, 'count': len(entries), 'truncated': truncated}
+
+
+def parse_osd(data: bytes, ready: dict[str, str]) -> Data:
+    """Turn an osd download (character cells, then colours) into text rows.
+
+    Args:
+        data: The downloaded cells.
+        ready: The ready line's fields: rows, width and stride.
+
+    Returns:
+        rows: one string per row, cut by stride and trimmed to width. NUL is a
+        space and any other unprintable cell a dot. Without a usable width and
+        stride, or with rows wider than their stride, there are no rows, and
+        never more rows than the data holds.
+    """
+    rows, width, stride = (_number(ready, key) for key in ('rows', 'width', 'stride'))
+    count = min(rows, (len(data) + stride - 1) // stride) if 0 < width <= stride else 0
+    text = []
+    for row in range(count):
+        cells = data[row * stride : row * stride + width]
+        line = ''.join(chr(cell) if cell in _PRINTABLE_CELLS else ('.' if cell else ' ') for cell in cells)
+        text.append(line.rstrip())
+    return {'rows': text}
 
 
 def parse_ver(lines: list[str]) -> Data:
@@ -201,6 +232,7 @@ COMMANDS = (
     Command('profile', 'prof get', KIND_TEXT, 'The profile currently loaded.', parse_fields),
     Command('input', 'input', KIND_TEXT, 'The selected input.', parse_input),
     Command('output', 'output', KIND_TEXT, 'The selected output.', parse_fields),
+    Command('osd', 'osd', KIND_DOWNLOAD, 'The on-screen menu, as text.', parse_osd),
     Command(
         'ls',
         'ls {}',
