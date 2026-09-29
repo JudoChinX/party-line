@@ -12,6 +12,12 @@ _render_cases = {
 }
 
 _refuse_cases = {
+    'newline_injection': {'name': 'stat', 'value': '/a\nrm /b'},
+    'tab': {'name': 'stat', 'value': '/a\tb'},
+    'dotdot_middle': {'name': 'stat', 'value': '/profile/../x'},
+    'empty': {'name': 'stat', 'value': ''},
+    'card_relative': {'name': 'stat', 'value': 'profile/A.rt4'},
+    'missing_arg': {'name': 'stat', 'value': None},
     'unexpected_arg': {'name': 'ver', 'value': 'x'},
 }
 
@@ -35,6 +41,11 @@ def test_render_refuses(name: str, value: str) -> None:
     """Test unsafe or malformed arguments never become wire text."""
     with pytest.raises(commands.ValidationError):
         commands.BY_NAME[name].render(value)
+
+
+def test_every_argument_row_has_a_validator() -> None:
+    """Test no row can put an unchecked argument on the wire."""
+    assert all(command.validate is not None for command in commands.COMMANDS if command.arg is not None)
 
 
 _parse_cases = {
@@ -73,6 +84,12 @@ _parse_cases = {
         'lines': ['output sel=0 live=0 model=0'],
         'expected': {'sel': '0', 'live': '0', 'model': '0'},
     },
+    'stat': {
+        'name': 'stat',
+        'lines': ['stat t=F sz=23040 mt=1577836800 at=0x20 nm=/profile/DV1/MENU.rt4'],
+        'expected': {'t': 'F', 'sz': '23040', 'mt': '1577836800', 'at': '0x20', 'nm': '/profile/DV1/MENU.rt4'},
+    },
+    'stat_error': {'name': 'stat', 'lines': ['stat err=2 NOSUCH'], 'expected': {'err': '2'}},
 }
 
 

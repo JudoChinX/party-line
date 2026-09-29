@@ -15,6 +15,7 @@ from typing import Callable
 from typing import Optional
 
 KIND_TEXT = 'text'
+MAX_PATH_LENGTH = 200
 
 Data = dict[str, Any]
 Parser = Callable[..., Data]
@@ -22,11 +23,21 @@ Parser = Callable[..., Data]
 _BUILD = re.compile(r'Build tag: (\S+)')
 _FIELD = re.compile(r'(\w+)=(\S+)')
 _PATH_FIELD = re.compile(r'\b(file|nm)=(.*\S)')
+_PRINTABLE_PATH = re.compile(r'[\x20-\x7e]{1,%d}' % MAX_PATH_LENGTH)
+_SEPARATORS = re.compile(r'[/\\]')
 _VERSION = re.compile(r'(.+?), FW Version: (\S+)')
 
 
 class ValidationError(ValueError):
     """An argument that must never reach the RT4K."""
+
+
+def _check_path(path: str) -> None:
+    """Reject anything but short printable ASCII without a '..' segment (either separator)."""
+    if not _PRINTABLE_PATH.fullmatch(path):
+        raise ValidationError(f'path must be 1-{MAX_PATH_LENGTH} printable ASCII characters: {path!r}')
+    if '..' in _SEPARATORS.split(path):
+        raise ValidationError(f'path may not contain a ".." segment: {path!r}')
 
 
 def _fields(line: str) -> Data:
@@ -86,6 +97,22 @@ def parse_ver(lines: list[str]) -> Data:
     return data
 
 
+def validate_card_path(path: str) -> None:
+    """Accept an absolute path on the RT4K's card, without spaces.
+
+    Args:
+        path: The path as typed, e.g. '/profile/DV1/SNES.rt4'.
+
+    Raises:
+        ValidationError: If the path is unsafe to put on the wire.
+    """
+    _check_path(path)
+    if not path.startswith('/'):
+        raise ValidationError(f'card paths start with "/": {path!r}')
+    if ' ' in path:
+        raise ValidationError(f'card paths may not contain spaces: {path!r}')
+
+
 @dataclass(frozen=True)
 class Command:
     """One row of the allowlist.
@@ -136,5 +163,8 @@ COMMANDS = (
     Command('profile', 'prof get', KIND_TEXT, 'The profile currently loaded.', parse_fields),
     Command('input', 'input', KIND_TEXT, 'The selected input.', parse_input),
     Command('output', 'output', KIND_TEXT, 'The selected output.', parse_fields),
+    Command(
+        'stat', 'stat {}', KIND_TEXT, 'Size and time of a file on the card.', parse_fields, 'PATH', validate_card_path
+    ),
 )
 BY_NAME = {command.name: command for command in COMMANDS}
