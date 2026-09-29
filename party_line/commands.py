@@ -14,7 +14,10 @@ from typing import Any
 from typing import Callable
 from typing import Optional
 
+KIND_LISTING = 'listing'
 KIND_TEXT = 'text'
+LISTING_ENTRY = 'ent '
+LISTING_TRUNCATED = 'ls truncated'
 MAX_PATH_LENGTH = 200
 
 Data = dict[str, Any]
@@ -76,6 +79,21 @@ def parse_input(lines: list[str]) -> Data:
     if words:
         data['name'] = ' '.join(words)
     return data
+
+
+def parse_listing(lines: list[str]) -> Data:
+    """Parse the 'ent ...' lines of an ls reply.
+
+    Args:
+        lines: Reply lines, ending with 'ls end <n>'.
+
+    Returns:
+        entries (a dict of fields per entry), count, and truncated: whether the
+        firmware said it stopped at its 512-entry limit.
+    """
+    entries = [_fields(line) for line in lines if line.startswith(LISTING_ENTRY)]
+    truncated = any(line.startswith(LISTING_TRUNCATED) for line in lines)
+    return {'entries': entries, 'count': len(entries), 'truncated': truncated}
 
 
 def parse_ver(lines: list[str]) -> Data:
@@ -163,6 +181,15 @@ COMMANDS = (
     Command('profile', 'prof get', KIND_TEXT, 'The profile currently loaded.', parse_fields),
     Command('input', 'input', KIND_TEXT, 'The selected input.', parse_input),
     Command('output', 'output', KIND_TEXT, 'The selected output.', parse_fields),
+    Command(
+        'ls',
+        'ls {}',
+        KIND_LISTING,
+        'List a folder on the card (firmware stops at 512 entries).',
+        parse_listing,
+        'DIR',
+        validate_card_path,
+    ),
     Command(
         'stat', 'stat {}', KIND_TEXT, 'Size and time of a file on the card.', parse_fields, 'PATH', validate_card_path
     ),
