@@ -53,6 +53,13 @@ def test_decoder_skips_noise_and_flags_bad_crc() -> None:
     assert frames[0].crc_ok is False
 
 
+def test_decoder_resyncs_past_impossible_length() -> None:
+    """Test a header claiming more than 2048 bytes is treated as noise."""
+    bogus = rtl1.MAGIC + b'\x00\x00\xff\xff\x03\x00'
+    frames = rtl1.Decoder().feed(bogus + rtl1.encode_frame(2, rtl1.TYPE_DATA, 0, b'ok'))
+    assert [frame.payload for frame in frames] == [b'ok']
+
+
 def test_decoder_keeps_a_trailing_half_magic() -> None:
     """Test a buffer ending in 0xA5 keeps it for the next read."""
     decoder = rtl1.Decoder()
