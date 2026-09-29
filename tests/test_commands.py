@@ -9,6 +9,7 @@ from party_line import commands
 _render_cases = {
     'ver': {'name': 'ver', 'value': None, 'expected': 'ver'},
     'profile': {'name': 'profile', 'value': None, 'expected': 'prof get'},
+    'get': {'name': 'get', 'value': '/profile/DV1/MENU.rt4', 'expected': 'get -- /profile/DV1/MENU.rt4'},
     'ls': {'name': 'ls', 'value': '/profile', 'expected': 'ls /profile'},
 }
 
@@ -16,6 +17,7 @@ _refuse_cases = {
     'newline_injection': {'name': 'stat', 'value': '/a\nrm /b'},
     'tab': {'name': 'stat', 'value': '/a\tb'},
     'dotdot_middle': {'name': 'stat', 'value': '/profile/../x'},
+    'dotdot_backslash': {'name': 'get', 'value': '/profile\\..\\x'},
     'empty': {'name': 'stat', 'value': ''},
     'card_relative': {'name': 'stat', 'value': 'profile/A.rt4'},
     'card_space': {'name': 'ls', 'value': '/_CRT Emulation'},
@@ -120,3 +122,12 @@ _parse_cases = {
 def test_parse(name: str, lines: list[str], expected: dict[str, object]) -> None:
     """Test each text row's parser turns real firmware replies into strings, as sent."""
     assert commands.BY_NAME[name].parse(lines) == expected
+
+
+def test_parse_file() -> None:
+    """Test get's data describes the bytes: size, SHA-256 and base64."""
+    assert commands.BY_NAME['get'].parse(b'hi', {}) == {
+        'size': 2,
+        'sha256': '8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4',
+        'content_base64': 'aGk=',
+    }
