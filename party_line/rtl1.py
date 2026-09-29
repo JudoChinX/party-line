@@ -85,6 +85,9 @@ class Decoder:
         frame = None
         while frame is None and self._sync():
             length = int.from_bytes(self._buffer[4:6], 'little')
+            if length > MAX_PAYLOAD:
+                self._buffer = self._buffer[len(MAGIC) :]
+                continue
             end = HEADER_LENGTH + length + CRC_LENGTH
             if len(self._buffer) < end:
                 break
