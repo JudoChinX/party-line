@@ -265,6 +265,7 @@ class Command:
         validate: Checks the argument; required when arg is set.
         expect: A reply line must start with this, or the RT4K refused.
         echo: The data key that repeats the argument back, for replies that don't.
+        bad_command_ok: True when 'Bad Command: ...' is the expected success reply.
     """
 
     name: str
@@ -276,6 +277,7 @@ class Command:
     validate: Optional[Callable[[str], None]] = None
     expect: Optional[str] = None
     echo: Optional[str] = None
+    bad_command_ok: bool = False
 
     def render(self, value: Optional[str] = None) -> str:
         """Build the exact text sent to the RT4K, validating the argument first.
@@ -346,5 +348,6 @@ COMMANDS = (
         expect='prof load ok',
         echo='profile',
     ),
+    Command('wake', 'pwr on', KIND_TEXT, 'Wake the unit from sleep.', parse_nothing, bad_command_ok=True),
 )
 BY_NAME = {command.name: command for command in COMMANDS}

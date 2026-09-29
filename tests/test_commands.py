@@ -15,6 +15,7 @@ _render_cases = {
     'ls': {'name': 'ls', 'value': '/profile', 'expected': 'ls /profile'},
     'remote': {'name': 'remote', 'value': 'menu', 'expected': 'remote menu'},
     'remote_aux8': {'name': 'remote', 'value': 'aux8', 'expected': 'remote aux8'},
+    'wake': {'name': 'wake', 'value': None, 'expected': 'pwr on'},
 }
 
 _refuse_cases = {
@@ -130,6 +131,7 @@ _parse_cases = {
     },
     'remote': {'name': 'remote', 'lines': ['Serial Remote: menu'], 'expected': {'key': 'menu'}},
     'load': {'name': 'load', 'lines': ['prof load ok'], 'expected': {}},
+    'wake': {'name': 'wake', 'lines': ['Bad Command: pwr on'], 'expected': {}},
 }
 
 
