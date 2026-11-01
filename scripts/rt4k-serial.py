@@ -18,6 +18,11 @@ file on stdin), so nothing has to be deployed to the card.
     scripts/rt4k-serial.py prof get               # loaded profile, relative to /profile
     scripts/rt4k-serial.py prof load DV1/MENU.rt4 # load a profile BY NAME
     scripts/rt4k-serial.py rm /some/file          # exists; be careful
+    scripts/rt4k-serial.py i2cr <addr> <reg>      # read one I2C register
+    scripts/rt4k-serial.py i2crb <addr> <reg> <n> # burst read, n 1..128 (fw >= 1.99.2)
+
+`poke`, `fpga` and `i2cw` write the live settings block, FPGA registers and the
+unit's own I2C chips. They are refused unless RT4K_ALLOW_RAW_WRITE=1.
 
 Protocol contract (from PIPe's serial-remote.js, verified on firmware 1.75.0):
 2,000,000 baud 8N1, hardware flow control, commands end in "\\r", replies are
@@ -673,6 +678,25 @@ def drop_lock(lock=None):
 
 # --- CLI ----------------------------------------------------------------------
 
+# Raw writes: `poke <off> <hex>` (live settings block), `fpga <reg> <val>` (no
+# read form) and `i2cw <addr> <reg> <val>`, which ships next to 1.99.2's burst
+# read `i2crb` without being in any changelog. Nothing here uses them, and the
+# CLI forwards text verbatim, so one mistyped letter (`i2cr` -> `i2cw`) would
+# reach the unit's HDMI chips. Refused unless explicitly allowed.
+RAW_WRITES = ("poke", "fpga", "i2cw")
+
+
+def raw_write_refusal(line):
+    """Why `line` must not be sent, or None if it may be."""
+    words = line.split()
+    if not words or words[0].lower() not in RAW_WRITES:
+        return None
+    if os.environ.get("RT4K_ALLOW_RAW_WRITE") == "1":
+        return None
+    return ("refusing `%s`: it writes RT4K hardware/state directly. "
+            "Set RT4K_ALLOW_RAW_WRITE=1 if you really mean it." % words[0])
+
+
 def on_mister():
     return os.path.exists("/media/fat/MiSTer") or os.environ.get("RT4K_LOCAL") == "1"
 
@@ -802,6 +826,10 @@ def dispatch(s, argv):
         print("DONE " + " ".join("%s=%d" % kv for kv in sorted(counts.items())), flush=True)
         return 0 if not counts.get("error") and not any(k == "VERIFY-FAILED" for k in counts) else 1
     line = " ".join(argv)
+    refusal = raw_write_refusal(line)
+    if refusal:
+        print(refusal, file=sys.stderr)
+        return 2
     replies = s.command(line)
     if not replies:
         print("%s: no reply (SVS commands are silent; anything else means the link is down)" % line, file=sys.stderr)

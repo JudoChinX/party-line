@@ -322,3 +322,28 @@ class SerialLockTest(unittest.TestCase):
             self.assertTrue(rt4k_serial.take_lock(wait_s=0, lock=self.lock))
         finally:
             del os.environ["RT4K_NO_LOCK"]
+
+
+class RawWriteGuardTest(unittest.TestCase):
+    """`poke`, `fpga` and `i2cw` write the live settings block, FPGA registers
+    and the unit's own I2C chips. The CLI forwards any text verbatim, so a
+    typo'd `i2cr` -> `i2cw` would go straight to the hardware."""
+
+    def setUp(self):
+        os.environ.pop("RT4K_ALLOW_RAW_WRITE", None)
+
+    def test_refuses_raw_writes(self):
+        for line in ("poke 100 00", "fpga 1 2", "i2cw 0x39 0x41 0x10", "I2CW 1 2 3"):
+            self.assertIsNotNone(rt4k_serial.raw_write_refusal(line), line)
+
+    def test_reads_pass(self):
+        for line in ("i2cr 0x39 0x41", "i2crb 0x39 0x00 16", "peek 0 32", "ver",
+                     "struct", "remote menu", "pokemon"):
+            self.assertIsNone(rt4k_serial.raw_write_refusal(line), line)
+
+    def test_env_escape_hatch(self):
+        os.environ["RT4K_ALLOW_RAW_WRITE"] = "1"
+        try:
+            self.assertIsNone(rt4k_serial.raw_write_refusal("i2cw 1 2 3"))
+        finally:
+            del os.environ["RT4K_ALLOW_RAW_WRITE"]
