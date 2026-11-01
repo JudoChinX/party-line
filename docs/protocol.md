@@ -34,6 +34,7 @@ RT4K Pro, firmware 1.75.0–1.86.0.
 | `rm <path>` | `rm ok` |
 | `input` / `output` | `input=0 HDMI ic=2 model=0` / `output sel=0 live=0 model=0` |
 | `banner`, `osd2 state` | the banner image path, and the secondary OSD plane's state |
+| `sget -a` | `sget ready size=22876 ver=109 nonce=0x…`, then the whole live settings block as an **acknowledged** RTL1 transfer: send an empty type-4 frame with each data frame's seq, and with the final SHA-256 response frame's seq too, or the unit prints `get timeout` ~4 s later and ignores commands meanwhile. Block offset N is `.rt4` offset N + 0x80 |
 | `struct` | `struct size=22876 poke_limit=22504 pad0=<n> ver=109`. `pad0` went 9652 → 9680 in 1.99.7 with `ver` unchanged, so compare the whole line after a firmware update |
 | `i2cr <addr> <reg>` / `i2crb <addr> <reg> <len>` | I2C register read / burst read, `len` 1..128 (`i2crb` since 1.99.2). Bare, each prints its usage line |
 | `poke`, `fpga`, `i2cw` | raw writes to the settings block, FPGA registers and I2C chips. `rt4k-serial.py` refuses them unless `RT4K_ALLOW_RAW_WRITE=1` |

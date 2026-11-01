@@ -12,6 +12,7 @@ file on stdin), so nothing has to be deployed to the card.
     scripts/rt4k-serial.py "SVS NEW INPUT=5"      # spaces are fine, quoted or not
     scripts/rt4k-serial.py osd                    # print the OSD as text
     scripts/rt4k-serial.py get /profile/DV1/MENU.rt4 > MENU.rt4
+    scripts/rt4k-serial.py sget > live.bin        # live settings block; offset N = .rt4 offset N+0x80
     scripts/rt4k-serial.py put MENU.rt4 /profile/DV1/MENU.rt4
     scripts/rt4k-serial.py ls /profile/DV1        # ent t=F sz=23004 mt=... nm=...
     scripts/rt4k-serial.py stat /profile/DV1/MENU.rt4
@@ -75,6 +76,7 @@ LOCK_WAIT_S = float(os.environ.get("RT4K_LOCK_WAIT", "90"))
 RUN_BAUD = 2000000       # firmware >= 1.75.0 default on USB
 TRANSFER_BAUD = 1000000  # highest rate with zero RX overruns on a DE10-Nano (measured)
 BAUDS = {2000000: termios.B2000000, 1000000: termios.B1000000, 500000: termios.B500000}
+SGET_READY_RE = r"^sget ready size=(?P<size>\d+) ver=(?P<ver>\d+) nonce=0x(?P<nonce>[0-9a-f]+)"
 GET_READY_RE = r"^get ready off=(?P<off>\d+) len=(?P<len>\d+) total=(?P<total>\d+) nonce=0x(?P<nonce>[0-9a-f]+)"
 BAUD_SWITCH_RE = re.compile(r"^baud switching to (\d+)", re.I)
 BAUD_CONFIRM_RE = re.compile(r"^baud confirmed (\d+)", re.I)
@@ -545,6 +547,71 @@ class Session:
         time.sleep(PACING_S)
         return replies
 
+    def download_acked(self, wire, ready_re, timeout=BINARY_IDLE_S):
+        """An ACKNOWLEDGED RTL1 download: the unit sends one data frame and waits
+        for an empty type-4 ACK carrying that frame's seq before the next.
+        `sget -a` only exists in this form (`sget -h` -> "only -a"); sent
+        through download() it stalls after one frame (2,076 bytes, measured
+        2026-11-01). Returns (ready_match, bytes, sha_ok)."""
+        os.write(self.fd, wire.encode("latin-1") + b"\r")
+        ready = None
+        deadline = time.time() + 2.0
+        while ready is None:
+            if time.time() > deadline:
+                raise RuntimeError("%s: no 'ready' line" % wire)
+            chunk = self._read(max(0.0, deadline - time.time()))
+            self.buf += chunk
+            while b"\n" in self.buf and ready is None:
+                raw, rest = self.buf.split(b"\n", 1)
+                if b"\xa5\x5a" in raw:          # frames began before a newline
+                    break
+                self.buf = rest
+                _, text = strip_prefix(raw.replace(b"\r", b"").decode("latin-1"))
+                if not text:
+                    continue
+                m = re.match(ready_re, text, re.I)
+                if m:
+                    ready = m
+                elif re.search(r"busy|error|err\b|bad command", text, re.I):
+                    raise RuntimeError("%s: %s" % (wire, text))
+        nonce = int(ready.group("nonce"), 16)
+        decoder, chunks, digest, seq = Rtl1Decoder(), [], None, 0
+        pending, last = self.buf, time.time()
+        self.buf = b""
+        while digest is None:
+            if not pending:
+                pending = self._read(0.2)
+                if not pending:
+                    if time.time() - last > timeout:
+                        os.write(self.fd, encode_frame(nonce, 6, seq))
+                        raise RuntimeError("%s: timed out after %d bytes" % (wire, sum(map(len, chunks))))
+                    continue
+            last = time.time()
+            frames, pending = decoder.feed(pending), b""
+            for f in frames:
+                if not f["crc_ok"] or f["nonce"] != nonce:
+                    os.write(self.fd, encode_frame(nonce, 6, seq))
+                    raise RuntimeError("%s: bad frame (crc_ok=%s)" % (wire, f["crc_ok"]))
+                if f["type"] == 3:
+                    if f["seq"] != seq & 0xFF:
+                        os.write(self.fd, encode_frame(nonce, 6, seq))
+                        raise RuntimeError("%s: sequence gap (got %d, expected %d)" % (wire, f["seq"], seq & 0xFF))
+                    chunks.append(f["payload"])
+                    os.write(self.fd, encode_frame(nonce, 4, f["seq"]))
+                    seq += 1
+                elif f["type"] == 2:
+                    # The SHA-256 response frame wants its ACK too. Without it
+                    # the unit sits in the session, prints `get timeout` ~4 s
+                    # later, and ignores any command sent meanwhile -- which
+                    # read as a missing `sget ready` on the next call.
+                    digest = bytes(f["payload"])
+                    os.write(self.fd, encode_frame(nonce, 4, f["seq"]))
+                elif f["type"] == 5:
+                    raise RuntimeError("%s: device NAK" % wire)
+        self._drain(0.15)
+        data = b"".join(chunks)
+        return ready, data, hashlib.sha256(data).digest() == digest
+
     def download(self, wire, ready_re, error_re=r"err=|\berror\b|cannot open|nothing shown|bad command"):
         """Run a non-acknowledged RTL1 transfer. Returns (ready_match, bytes, sha_ok)."""
         os.write(self.fd, wire.encode("latin-1") + b"\r")
@@ -796,6 +863,21 @@ def dispatch(s, argv):
             return 1
         if ready.group("len") != ready.group("total"):
             print("get: device sent %s of %s bytes" % (ready.group("len"), ready.group("total")), file=sys.stderr)
+        sys.stdout.buffer.write(data)
+        sys.stdout.buffer.flush()
+        return 0
+    if cmd == "sget":
+        # The whole live settings block (`struct size` bytes). Block offset N is
+        # .rt4 file offset N + 0x80. Changes made in the menu show up here before
+        # any save, which is what rt4k-learn.py diffs.
+        try:
+            ready, data, ok = s.transfer(s.download_acked, "sget -a", SGET_READY_RE)
+        except RuntimeError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        if not ok:
+            print("sget: SHA-256 mismatch after %d bytes" % len(data), file=sys.stderr)
+            return 1
         sys.stdout.buffer.write(data)
         sys.stdout.buffer.flush()
         return 0
