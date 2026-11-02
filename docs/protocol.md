@@ -39,7 +39,7 @@ RT4K Pro, firmware 1.75.0–1.86.0.
 | `i2cr <addr> <reg>` / `i2crb <addr> <reg> <len>` | I2C register read / burst read, `len` 1..128 (`i2crb` since 1.99.2). Bare, each prints its usage line |
 | `poke`, `fpga`, `i2cw` | raw writes to the settings block, FPGA registers and I2C chips. `rt4k-serial.py` refuses them unless `RT4K_ALLOW_RAW_WRITE=1` |
 
-`get` wants `-- <path>`. `ls`, `stat` and `rm` take the path bare.
+`get` wants `-- <path>`. Flags: `-a` (acknowledged, like `sget -a`), `-o <off> -l <len>` (a byte range). Large files need both: a plain `get` of several MB fails its CRC (FT232R overrun), and an ACKed one can still lose bytes inside a frame and stall, with no resend on NAK or re-ACK. `rt4k-serial.py get` reads 256 KB ACKed ranges, each SHA-checked and retried on its own. `ls`, `stat` and `rm` take the path bare.
 
 Files written by `put` get an mtime of 2020-01-01, because the unit has no
 clock. Every profile is 23,004 bytes. So neither mtime nor size can tell two

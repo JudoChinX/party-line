@@ -347,3 +347,43 @@ class RawWriteGuardTest(unittest.TestCase):
             self.assertIsNone(rt4k_serial.raw_write_refusal("i2cw 1 2 3"))
         finally:
             del os.environ["RT4K_ALLOW_RAW_WRITE"]
+
+
+class FetchRangedTest(unittest.TestCase):
+    """Large `get`s go in ACKed, ranged chunks, each SHA-checked by the unit and
+    retried on its own. A 6.2 MB screenshot stalled at a random frame every
+    time as one transfer (2026-11-02)."""
+
+    def setUp(self):
+        self.blob = bytes(range(256)) * 40 + b"tail"       # 10,244 bytes
+
+    def test_reassembles_in_order(self):
+        calls = []
+
+        def fetch(off, n):
+            calls.append((off, n))
+            return len(self.blob), self.blob[off:off + n], True
+
+        self.assertEqual(rt4k_serial.fetch_ranged(fetch, chunk=4096), self.blob)
+        self.assertEqual(calls, [(0, 4096), (4096, 4096), (8192, 4096)])
+
+    def test_retries_a_failed_chunk_only(self):
+        fails = {4096: 2}
+
+        def fetch(off, n):
+            if fails.get(off):
+                fails[off] -= 1
+                raise RuntimeError("stalled")
+            return len(self.blob), self.blob[off:off + n], True
+
+        self.assertEqual(rt4k_serial.fetch_ranged(fetch, chunk=4096, retries=3), self.blob)
+
+    def test_bad_hash_is_a_retry_and_exhaustion_raises(self):
+        def fetch(off, n):
+            return len(self.blob), self.blob[off:off + n], off != 4096
+
+        with self.assertRaises(RuntimeError):
+            rt4k_serial.fetch_ranged(fetch, chunk=4096, retries=2)
+
+    def test_empty_file(self):
+        self.assertEqual(rt4k_serial.fetch_ranged(lambda off, n: (0, b"", True), chunk=4096), b"")

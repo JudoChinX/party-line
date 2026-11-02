@@ -672,6 +672,42 @@ class Session:
         return ready, data, hashlib.sha256(data).digest() == digest
 
 
+GET_CHUNK = 256 * 1024   # bytes per ranged ACKed `get`; one stall costs at most this much
+
+
+def fetch_ranged(fetch, chunk=GET_CHUNK, retries=4, progress=None):
+    """Assemble a file from ranged reads. `fetch(off, n)` returns
+    (total, data, sha_ok) for one window and may raise RuntimeError.
+
+    Why chunks: ACK pacing stops the FT232R overrunning BETWEEN frames, but a
+    2 KB frame can still lose bytes inside itself. The decoder then waits for
+    bytes that never come while the unit waits for an ACK, at a random frame
+    (206, 255, 2158 of a 6.2 MB screenshot, 2026-11-02). Neither a NAK nor a
+    re-ACK makes the unit resend, so a stalled window is aborted and fetched
+    again; each window's SHA-256 comes from the unit."""
+    out, off, total = [], 0, None
+    while total is None or off < total:
+        for attempt in range(retries):
+            try:
+                t, data, ok = fetch(off, chunk)
+            except RuntimeError as e:
+                err = str(e)
+                continue
+            if ok and (data or t == off):
+                break
+            err = "SHA-256 mismatch" if data else "empty window"
+        else:
+            raise RuntimeError("window at %d failed %d times: %s" % (off, retries, err))
+        total = t
+        out.append(data)
+        off += len(data)
+        if progress:
+            progress(off, total)
+        if not data:
+            break
+    return b"".join(out)
+
+
 def lock_holder(lock=None):
     """PID currently holding `lock`, or None if free or the holder is gone."""
     lock = LOCK if lock is None else lock
@@ -854,15 +890,23 @@ def dispatch(s, argv):
             print("usage: get /path/on/rt4k/card", file=sys.stderr)
             return 2
         try:
-            ready, data, ok = s.transfer(s.download, "get -- " + args[0], GET_READY_RE)
+            def window(off, n):
+                try:
+                    r, d, ok = s.transfer(s.download_acked, "get -a -o %d -l %d -- %s" % (off, n, args[0]),
+                                          GET_READY_RE, timeout=2.0)
+                except RuntimeError:
+                    s._drain(1.5)            # let the aborted session die before retrying
+                    raise
+                return int(r.group("total")), d, ok
+
+            def progress(done, total):
+                if total > GET_CHUNK:
+                    print("get: %d / %d" % (done, total), file=sys.stderr, flush=True)
+
+            data = fetch_ranged(window, progress=progress)
         except RuntimeError as e:
-            print(str(e), file=sys.stderr)
+            print("get: %s" % e, file=sys.stderr)
             return 1
-        if not ok:
-            print("get: SHA-256 mismatch after %d bytes" % len(data), file=sys.stderr)
-            return 1
-        if ready.group("len") != ready.group("total"):
-            print("get: device sent %s of %s bytes" % (ready.group("len"), ready.group("total")), file=sys.stderr)
         sys.stdout.buffer.write(data)
         sys.stdout.buffer.flush()
         return 0
