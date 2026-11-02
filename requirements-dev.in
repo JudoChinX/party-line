@@ -4,7 +4,7 @@
 bandit>=1.9.4
 mypy>=2.3.1
 pylint>=4.0.5
-pytest>=8.3.4
+pytest>=9.2.0
 pytest-cov>=6.0.0
 ruff>=0.16.9
 yamllint>=1.35.1
