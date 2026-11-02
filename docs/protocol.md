@@ -33,6 +33,7 @@ RT4K Pro, firmware 1.75.0–1.86.0.
 | `stat <path>` | `stat t=F sz=<n> mt=… nm=<path>` or `stat err=2 NOSUCH` |
 | `rm <path>` | `rm ok` |
 | `input` / `output` | `input=0 HDMI ic=2 model=0` / `output sel=0 live=0 model=0` |
+| `snap` / `snap 1` / `snap 2` | Screenshots (fw 1.99.9). Bare: `snap state <s> row <r> lost <n>` (0 idle, 2 capturing). `1` captures the input picture and `2` the output picture to `/screenshots` as an uncompressed PNG, replying `snap: snap N.png <w>x<h>`, with no dialog. Any other argument is silent and the OSD shows "SCREENSHOT REFUSED" |
 | `banner`, `osd2 state` | the banner image path, and the secondary OSD plane's state |
 | `sget -a` | `sget ready size=22876 ver=109 nonce=0x…`, then the whole live settings block as an **acknowledged** RTL1 transfer: send an empty type-4 frame with each data frame's seq, and with the final SHA-256 response frame's seq too, or the unit prints `get timeout` ~4 s later and ignores commands meanwhile. Block offset N is `.rt4` offset N + 0x80 |
 | `struct` | `struct size=22876 poke_limit=22504 pad0=<n> ver=109`. `pad0` went 9652 → 9680 in 1.99.7 with `ver` unchanged, so compare the whole line after a firmware update |
