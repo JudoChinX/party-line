@@ -106,6 +106,33 @@ def crc16(data, crc=0xFFFF):
     return binascii.crc_hqx(bytes(data), crc)
 
 
+class MissingFile(RuntimeError):
+    """The card has no such file (`get` answered "cannot open")."""
+
+
+_REPLY_ERROR_RE = re.compile(r"busy|error|err\b|bad command", re.I)
+
+
+def classify_reply(text, ready_re):
+    """What a text line seen before a transfer's `ready` means:
+    ("ready", match) | ("missing", text) | ("ignore", text) | ("error", text) | ("other", text).
+
+    "ignore" is the unit echoing an RTL1 frame back as text -- after an aborted
+    transfer, our own abort frame comes back as `Bad Command: \xa5Z...`. It says
+    nothing about the next command, and treating it as that command's error
+    spoiled every retry in the 2026-11-03 deploy (55 of 3,145 files)."""
+    m = re.match(ready_re, text, re.I)
+    if m:
+        return "ready", m
+    if re.search(r"cannot open|NOSUCH", text, re.I):
+        return "missing", text
+    if text.startswith("Bad Command: \xa5Z"):
+        return "ignore", text
+    if _REPLY_ERROR_RE.search(text):
+        return "error", text
+    return "other", text
+
+
 def encode_frame(nonce, ftype, seq, payload=b""):
     if len(payload) > RTL1_MAX_PAYLOAD:
         raise ValueError("a %d-byte payload does not fit in one frame (limit %d)" % (len(payload), RTL1_MAX_PAYLOAD))
@@ -426,16 +453,28 @@ class Session:
         return replies[-1]
 
     def fetch(self, path):
-        """get -- path -> bytes, or None if the card has no such file."""
+        """get -> bytes, or None if the card has no such file.
+
+        Acknowledged and ranged (`get -a -o <off> -l <len>`), each window
+        SHA-checked by the unit and retried on its own -- see fetch_ranged().
+        This is the deploy's read, before (backup) and after (verify) every
+        push. It used the plain `get`, whose ~1.5 % bad-CRC rate at 1 Mbaud cost
+        55 errors and two extra passes in the 2026-11-03 deploy of 3,145 files.
+        A profile (23,004 B) is a single window."""
+        def window(off, n):
+            try:
+                r, d, ok = self.download_acked("get -a -o %d -l %d -- %s" % (off, n, path),
+                                               GET_READY_RE, timeout=2.0)
+            except MissingFile:
+                raise
+            except RuntimeError:
+                self._drain(1.5)               # let the aborted stream run out
+                raise
+            return int(r.group("total")), d, ok
         try:
-            ready, data, ok = self.download("get -- " + path, GET_READY_RE)
-        except RuntimeError as e:
-            if "cannot open" in str(e):
-                return None
-            raise
-        if not ok:
-            raise RuntimeError("get %s: SHA-256 mismatch" % path)
-        return data
+            return fetch_ranged(window)
+        except MissingFile:
+            return None
 
     def deploy(self, workdir):
         """One-session push of workdir/files/* per workdir/plan.tsv, with the
@@ -569,10 +608,12 @@ class Session:
                 _, text = strip_prefix(raw.replace(b"\r", b"").decode("latin-1"))
                 if not text:
                     continue
-                m = re.match(ready_re, text, re.I)
-                if m:
+                kind, m = classify_reply(text, ready_re)
+                if kind == "ready":
                     ready = m
-                elif re.search(r"busy|error|err\b|bad command", text, re.I):
+                elif kind == "missing":
+                    raise MissingFile("%s: %s" % (wire, text))
+                elif kind == "error":
                     raise RuntimeError("%s: %s" % (wire, text))
         nonce = int(ready.group("nonce"), 16)
         decoder, chunks, digest, seq = Rtl1Decoder(), [], None, 0
@@ -690,6 +731,8 @@ def fetch_ranged(fetch, chunk=GET_CHUNK, retries=4, progress=None):
         for attempt in range(retries):
             try:
                 t, data, ok = fetch(off, chunk)
+            except MissingFile:
+                raise
             except RuntimeError as e:
                 err = str(e)
                 continue
@@ -890,22 +933,12 @@ def dispatch(s, argv):
             print("usage: get /path/on/rt4k/card", file=sys.stderr)
             return 2
         try:
-            def window(off, n):
-                try:
-                    r, d, ok = s.transfer(s.download_acked, "get -a -o %d -l %d -- %s" % (off, n, args[0]),
-                                          GET_READY_RE, timeout=2.0)
-                except RuntimeError:
-                    s._drain(1.5)            # let the aborted session die before retrying
-                    raise
-                return int(r.group("total")), d, ok
-
-            def progress(done, total):
-                if total > GET_CHUNK:
-                    print("get: %d / %d" % (done, total), file=sys.stderr, flush=True)
-
-            data = fetch_ranged(window, progress=progress)
+            data = s.transfer(s.fetch, args[0])
         except RuntimeError as e:
             print("get: %s" % e, file=sys.stderr)
+            return 1
+        if data is None:
+            print("get: %s: no such file" % args[0], file=sys.stderr)
             return 1
         sys.stdout.buffer.write(data)
         sys.stdout.buffer.flush()

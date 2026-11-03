@@ -387,3 +387,64 @@ class FetchRangedTest(unittest.TestCase):
 
     def test_empty_file(self):
         self.assertEqual(rt4k_serial.fetch_ranged(lambda off, n: (0, b"", True), chunk=4096), b"")
+
+
+class ReplyLineTest(unittest.TestCase):
+    """What download_acked does with each text line before `ready`."""
+
+    def test_ready(self):
+        kind, m = rt4k_serial.classify_reply(
+            "get ready off=0 len=23004 total=23004 nonce=0x1F83", rt4k_serial.GET_READY_RE)
+        self.assertEqual(kind, "ready")
+        self.assertEqual(m.group("nonce"), "1F83")
+
+    def test_missing_file_is_its_own_kind(self):
+        self.assertEqual(rt4k_serial.classify_reply("get: cannot open /x.rt4", rt4k_serial.GET_READY_RE)[0],
+                         "missing")
+
+    def test_echo_of_our_own_abort_is_ignored(self):
+        # After an aborted transfer the unit echoes the abort frame back as text.
+        # Treating that as an error spoiled every retry in the 2026-11-03 deploy.
+        self.assertEqual(rt4k_serial.classify_reply("Bad Command: \xa5Z\x9e\xab", rt4k_serial.GET_READY_RE)[0],
+                         "ignore")
+
+    def test_real_errors_still_raise(self):
+        for line in ("busy", "Bad Command: get -q", "get: err=5"):
+            self.assertEqual(rt4k_serial.classify_reply(line, rt4k_serial.GET_READY_RE)[0], "error", line)
+
+
+class FetchTest(unittest.TestCase):
+    """Session.fetch, the deploy's read, over a fake acknowledged transport."""
+
+    def session(self, script):
+        s = rt4k_serial.Session.__new__(rt4k_serial.Session)
+        calls = []
+
+        def download_acked(wire, ready_re, timeout=None):
+            calls.append(wire)
+            step = script.pop(0)
+            if isinstance(step, Exception):
+                raise step
+            return step
+        s.download_acked = download_acked
+        s._drain = lambda t: None
+        return s, calls
+
+    def ready(self, total):
+        import re
+        return re.match(rt4k_serial.GET_READY_RE,
+                        "get ready off=0 len=%d total=%d nonce=0x1" % (total, total))
+
+    def test_uses_acked_ranged_reads(self):
+        s, calls = self.session([(self.ready(5), b"hello", True)])
+        self.assertEqual(s.fetch("/p/a.rt4"), b"hello")
+        self.assertTrue(calls[0].startswith("get -a -o 0 -l "), calls[0])
+
+    def test_a_failed_window_is_retried(self):
+        s, calls = self.session([RuntimeError("frame with bad CRC"), (self.ready(5), b"hello", True)])
+        self.assertEqual(s.fetch("/p/a.rt4"), b"hello")
+        self.assertEqual(len(calls), 2)
+
+    def test_missing_file_is_none(self):
+        s, _ = self.session([rt4k_serial.MissingFile("get: cannot open /p/a.rt4")])
+        self.assertIsNone(s.fetch("/p/a.rt4"))
