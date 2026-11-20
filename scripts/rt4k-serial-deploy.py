@@ -74,9 +74,9 @@ def ssh(command, **kw):
 def prepare_command(discard):
     """The one ssh command that readies WORKDIR; exits 3 (touching nothing) when
     an earlier deploy is still running, or was never collected unless discard.
-    A RUNNING deploy always refuses: rm -rf would not stop it (it works from paths),
+    A RUNNING deploy always refuses (ps | grep: BusyBox has no pgrep -f): rm -rf would not stop it (it works from paths),
     and the new one could not take the serial lock anyway."""
-    running = ("if pgrep -f '[r]t4k-serial.py deploy' >/dev/null; then "
+    running = ("if ps | grep -q '[r]t4k-serial.py deploy'; then "
                "echo 'a deploy is RUNNING in {w}; wait for it to finish'; exit 3; fi; ").format(w=WORKDIR)
     uncollected = "" if discard else (
         "if [ -e {w}/plan.tsv ] && [ ! -e {w}/collected ]; then "

@@ -50,12 +50,13 @@ class LaunchGuardTest(unittest.TestCase):
     def test_discard_previous_skips_only_the_uncollected_guard(self):
         script = deploy.prepare_command(discard=True)
         self.assertNotIn("collected", script)
-        self.assertIn("pgrep", script)          # a RUNNING deploy still refuses
+        self.assertIn("ps | grep", script)       # a RUNNING deploy still refuses
+        self.assertNotIn("pgrep", script)       # BusyBox pgrep has no -f
         self.assertLess(script.index("exit 3"), script.index("rm -rf"))
 
     def test_running_deploy_check_comes_before_the_uncollected_one(self):
         script = deploy.prepare_command(discard=False)
-        self.assertLess(script.index("pgrep"), script.index("collected"))
+        self.assertLess(script.index("ps | grep"), script.index("collected"))
 
     def test_launch_refuses_on_exit_3_and_never_extracts(self):
         def fake_run(cmd, **kw):
