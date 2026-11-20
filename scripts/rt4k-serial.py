@@ -251,6 +251,12 @@ def decide(card_md5, repo_md5, base_md5):
     return "conflict"
 
 
+def deploy_exit_code(counts):
+    """Exit status for a `deploy` run: non-zero on any error row or any
+    read-back that did not match (VERIFY-FAILED is counted by Session.deploy)."""
+    return 1 if counts.get("error") or counts.get("VERIFY-FAILED") else 0
+
+
 def read_plan(path):
     """plan.tsv: card-relative path, repo md5, baseline md5 ('-' if none)."""
     plan = []
@@ -499,7 +505,8 @@ class Session:
                             os.makedirs(os.path.dirname(dest), exist_ok=True)
                             with open(dest, "wb") as fh:
                                 fh.write(before)
-                        data = open(os.path.join(workdir, "files", rel), "rb").read()
+                        with open(os.path.join(workdir, "files", rel), "rb") as fh:
+                            data = fh.read()
                         self.upload(path, data)
                         after = self.fetch(path)
                         after_md5 = hashlib.md5(after).hexdigest() if after is not None else None
@@ -509,17 +516,16 @@ class Session:
                 except RuntimeError as e:
                     action, card_md5, status = "error", None, str(e).replace("\t", " ")[:200]
                     self._drain(3.0)           # let a half-finished stream run out before retrying
-                    if attempt == 1:
-                        continue
-                    errors_in_a_row += 1
-                if errors_in_a_row >= 3:
-                    out.write("%s\t%s\t%s\t%s\n" % (rel, action, card_md5 or "-", status))
-                    out.flush()
-                    print("STOPPING after 3 consecutive errors", flush=True)
-                    break
+                    if attempt == 2:
+                        errors_in_a_row += 1
             counts[action] = counts.get(action, 0) + 1
+            if status == "VERIFY-FAILED":
+                counts[status] = counts.get(status, 0) + 1   # statuses are not actions; deploy_exit_code needs this
             out.write("%s\t%s\t%s\t%s\n" % (rel, action, card_md5 or "-", status))
             out.flush()
+            if errors_in_a_row >= 3:
+                print("STOPPING after 3 consecutive errors", flush=True)
+                break
             if i % 25 == 0 or i == len(plan):
                 print("%d/%d %s" % (i, len(plan), " ".join("%s=%d" % kv for kv in sorted(counts.items()))), flush=True)
         out.close()
@@ -983,7 +989,7 @@ def dispatch(s, argv):
             return 2
         counts = s.transfer(s.deploy, args[0])
         print("DONE " + " ".join("%s=%d" % kv for kv in sorted(counts.items())), flush=True)
-        return 0 if not counts.get("error") and not any(k == "VERIFY-FAILED" for k in counts) else 1
+        return deploy_exit_code(counts)
     line = " ".join(argv)
     refusal = raw_write_refusal(line)
     if refusal:

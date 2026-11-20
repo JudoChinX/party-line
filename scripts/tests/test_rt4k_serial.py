@@ -4,10 +4,14 @@ What is worth pinning: the RTL1 frame codec (a wrong CRC or a bad resync
 silently corrupts an OSD dump or a file pull), reply-line splitting, OSD text
 rendering, and the tty resolver -- which must never hand back the PN532's port.
 """
+import hashlib
 import importlib.util
+import io
 import os
+import shutil
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _spec = importlib.util.spec_from_file_location(
@@ -448,3 +452,86 @@ class FetchTest(unittest.TestCase):
     def test_missing_file_is_none(self):
         s, _ = self.session([rt4k_serial.MissingFile("get: cannot open /p/a.rt4")])
         self.assertIsNone(s.fetch("/p/a.rt4"))
+
+
+class DeployTest(unittest.TestCase):
+    """Session.deploy over a fake card: the consecutive-error abort and the
+    VERIFY-FAILED exit status."""
+
+    def workdir(self, names):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        with open(os.path.join(d, "plan.tsv"), "w") as fh:
+            for n in names:
+                data = b"new-" + n.encode()
+                os.makedirs(os.path.dirname(os.path.join(d, "files", n)), exist_ok=True)
+                with open(os.path.join(d, "files", n), "wb") as f:
+                    f.write(data)
+                fh.write("%s\t%s\t-\n" % (n, hashlib.md5(data).hexdigest()))
+        return d
+
+    def session(self, fetch, upload=None):
+        s = rt4k_serial.Session.__new__(rt4k_serial.Session)
+        s.fetch = fetch
+        s.upload = upload or (lambda path, data: None)
+        s._drain = lambda t: None
+        return s
+
+    def rows(self, d):
+        with open(os.path.join(d, "result.tsv")) as fh:
+            return [line.rstrip("\n").split("\t") for line in fh]
+
+    def run_deploy(self, s, d):
+        with redirect_stdout(io.StringIO()) as out:
+            counts = s.deploy(d)
+        return counts, out.getvalue()
+
+    def test_three_consecutive_errors_stop_the_whole_plan(self):
+        names = ["profile/a.rt4", "profile/b.rt4", "profile/c.rt4", "profile/d.rt4", "profile/e.rt4"]
+        d = self.workdir(names)
+        fetched = []
+
+        def fetch(path):
+            fetched.append(path)
+            raise RuntimeError("link down")
+        counts, out = self.run_deploy(self.session(fetch), d)
+        self.assertIn("STOPPING after 3 consecutive errors", out)
+        self.assertEqual([r[0] for r in self.rows(d)], names[:3])   # no 4th file, no duplicate rows
+        self.assertEqual(counts, {"error": 3})
+        self.assertEqual(len(fetched), 6)                            # 3 files x (try + one retry)
+
+    def test_a_success_resets_the_error_run(self):
+        names = ["profile/a.rt4", "profile/b.rt4", "profile/c.rt4", "profile/d.rt4"]
+        d = self.workdir(names)
+        bad = {"/profile/a.rt4", "/profile/b.rt4", "/profile/d.rt4"}
+
+        def fetch(path):
+            if path in bad:
+                raise RuntimeError("bad CRC")
+            return None
+        counts, out = self.run_deploy(self.session(fetch), d)
+        self.assertNotIn("STOPPING", out)
+        self.assertEqual(len(self.rows(d)), 4)
+        self.assertEqual(counts.get("error"), 3)
+
+    def test_verify_failed_is_counted_so_the_exit_is_nonzero(self):
+        d = self.workdir(["profile/a.rt4"])
+        card = {}
+
+        def upload(path, data):
+            card[path] = b"corrupted"            # read-back differs from the repo md5
+        counts, _ = self.run_deploy(self.session(card.get, upload), d)
+        self.assertEqual(self.rows(d)[0][3], "VERIFY-FAILED")
+        self.assertEqual(counts.get("VERIFY-FAILED"), 1)
+        self.assertEqual(rt4k_serial.deploy_exit_code(counts), 1)
+
+    def test_clean_deploy_exits_zero(self):
+        d = self.workdir(["profile/a.rt4"])
+        card = {}
+
+        def upload(path, data):
+            card[path] = data
+        counts, _ = self.run_deploy(self.session(card.get, upload), d)
+        self.assertEqual(self.rows(d)[0][3], "verified")
+        self.assertEqual(rt4k_serial.deploy_exit_code(counts), 0)
+        self.assertEqual(rt4k_serial.deploy_exit_code({"error": 1}), 1)
