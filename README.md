@@ -110,6 +110,12 @@ baseline**, so any file already on the card that differs from yours is a
 next deploy can tell "you changed it locally" (it is sent) from "someone tuned
 it on the unit" (it is left alone).
 
+`launch` refuses while the previous deploy is still running, or finished but
+was never `collect`ed (`--discard-previous` overrides only the second case).
+A deploy that hits three errors in a row stops, and `collect` warns when it
+holds fewer result rows than planned files. The deploy exits non-zero if any
+read-back did not match.
+
 Paths containing spaces are refused, because the firmware's `get`/`put`
 tokenise on spaces.
 

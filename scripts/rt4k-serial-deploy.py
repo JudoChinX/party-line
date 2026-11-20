@@ -21,17 +21,24 @@ the unit is never overwritten because a folder on your PC disagrees with it.
 Two phases, because a full deploy takes ~1 s per file and runs detached on
 the MiSTer:
 
-    scripts/rt4k-serial-deploy.py --mirror DIR launch [--dry-run] [--limit N] [--only-new]
+    scripts/rt4k-serial-deploy.py --mirror DIR launch [--dry-run] [--limit N] [--only-new] [--discard-previous]
     scripts/rt4k-serial-deploy.py --mirror DIR status
     scripts/rt4k-serial-deploy.py --mirror DIR collect [--partial]
 
-launch  computes the pending set (MIRROR/profile/ files whose md5 differs from
+launch  refuses while /tmp/rt4k-deploy on the MiSTer holds a deploy that is
+        running (always) or whose results were never collected (plan.tsv
+        present, no `collected` marker; --discard-previous overrides). It
+        checks inside the same ssh that would otherwise rm the folder. Then it
+        computes the pending set (MIRROR/profile/ files whose md5 differs from
         the baseline), stages them plus plan.tsv on the MiSTer's tmpfs, and
         starts `rt4k-serial.py deploy` there under nohup.
 status  tails the log.
 collect fetches result.tsv and the pre-overwrite copies, stores them under
         the backups folder (default MIRROR/.rt4k-backups), and updates the
-        baseline for every verified push.
+        baseline for every verified push, using the md5 that was PUSHED
+        (plan.tsv on the MiSTer), not the current mirror. It warns when there
+        are fewer result rows than plan rows (a STOPPED deploy), and marks a
+        full collect `collected` on the MiSTer (--partial does not).
 
 --mirror can also come from RT4K_MIRROR, and the MiSTer from RT4K_HOST.
 """
@@ -64,6 +71,34 @@ def ssh(command, **kw):
     return sh(["ssh", "-o", "BatchMode=yes", HOST, command], **kw)
 
 
+def prepare_command(discard):
+    """The one ssh command that readies WORKDIR; exits 3 (touching nothing) when
+    an earlier deploy is still running, or was never collected unless discard.
+    A RUNNING deploy always refuses: rm -rf would not stop it (it works from paths),
+    and the new one could not take the serial lock anyway."""
+    running = ("if pgrep -f '[r]t4k-serial.py deploy' >/dev/null; then "
+               "echo 'a deploy is RUNNING in {w}; wait for it to finish'; exit 3; fi; ").format(w=WORKDIR)
+    uncollected = "" if discard else (
+        "if [ -e {w}/plan.tsv ] && [ ! -e {w}/collected ]; then "
+        "echo 'an earlier deploy in {w} was never collected'; exit 3; fi; ").format(w=WORKDIR)
+    return running + uncollected + "rm -rf %s && mkdir -p %s" % (WORKDIR, WORKDIR)
+
+
+def remote_text(name):
+    return subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, "cat %s/%s" % (WORKDIR, name)],
+                          capture_output=True, text=True, check=True).stdout
+
+
+def remote_predeploy(path):
+    with open(path, "wb") as fh:
+        sh(["ssh", "-o", "BatchMode=yes", HOST,
+            "cd %s && [ -d before ] && tar czf - before || tar czf - --files-from /dev/null" % WORKDIR], stdout=fh)
+
+
+def mark_collected():
+    ssh("touch %s/collected" % WORKDIR)
+
+
 def pending(only_new=False):
     base = manifest.read(BASELINE)
     out = []
@@ -71,7 +106,8 @@ def pending(only_new=False):
         for fn in sorted(filenames):
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, MIRROR).replace(os.sep, "/")
-            md5 = hashlib.md5(open(full, "rb").read()).hexdigest()
+            with open(full, "rb") as fh:
+                md5 = hashlib.md5(fh.read()).hexdigest()
             b = base.get(rel)
             if b == md5 or (only_new and b is not None):
                 continue
@@ -103,7 +139,13 @@ def launch(args):
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             shutil.copyfile(os.path.join(MIRROR, rel), dest)
         shutil.copyfile(TOOL, os.path.join(stage, "rt4k-serial.py"))
-        ssh("rm -rf %s && mkdir -p %s" % (WORKDIR, WORKDIR))
+        prep = subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, prepare_command(args.discard_previous)])
+        if prep.returncode == 3:
+            sys.exit("refusing: the box holds a running or uncollected deploy (see above). Running: wait "
+                     "for it. Uncollected: run `collect` first; after a `collect --partial` (a deploy that "
+                     "died before DONE), pass --discard-previous to throw the rest away")
+        if prep.returncode != 0:
+            sys.exit("could not ready %s on %s (ssh exit %d)" % (WORKDIR, HOST, prep.returncode))
         tar = subprocess.Popen(["tar", "cf", "-", "-C", stage, "."], stdout=subprocess.PIPE)
         sh(["ssh", "-o", "BatchMode=yes", HOST, "tar xf - -C %s" % WORKDIR], stdin=tar.stdout)
         tar.wait()
@@ -118,19 +160,24 @@ def status(args):
 
 
 def collect(args):
-    log = subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, "cat %s/log" % WORKDIR],
-                         capture_output=True, text=True, check=True).stdout
+    log = remote_text("log")
     if "DONE " not in log and not args.partial:
         sys.exit("deploy has not finished (no DONE line in the log); use --partial to collect anyway")
     stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H%M%S")
     os.makedirs(BACKUPS, exist_ok=True)
     result_path = os.path.join(BACKUPS, "rt4k-serial-%s-result.tsv" % stamp)
-    sh(["scp", "-q", "%s:%s/result.tsv" % (HOST, WORKDIR), result_path])
+    plan_text = remote_text("plan.tsv")
+    with open(result_path, "w", encoding="utf-8") as fh:
+        fh.write(remote_text("result.tsv"))
     tgz = os.path.join(BACKUPS, "rt4k-serial-%s-predeploy.tgz" % stamp)
-    with open(tgz, "wb") as fh:
-        sh(["ssh", "-o", "BatchMode=yes", HOST,
-            "cd %s && [ -d before ] && tar czf - before || tar czf - --files-from /dev/null" % WORKDIR], stdout=fh)
-    rows = [line.rstrip("\n").split("\t") for line in open(result_path, encoding="utf-8") if line.strip()]
+    remote_predeploy(tgz)
+    pushed = {}
+    for line in plan_text.splitlines():
+        if line and not line.startswith("#"):
+            rel, md5, _base = line.split("\t")
+            pushed[rel] = md5
+    with open(result_path, encoding="utf-8") as fh:
+        rows = [line.rstrip("\n").split("\t") for line in fh if line.strip()]
     counts = {}
     verified = []
     for rel, action, _card, status_ in rows:
@@ -143,27 +190,22 @@ def collect(args):
             verified.append(rel)
     for k, n in sorted(counts.items()):
         print("  %-24s %d" % (k, n))
+    if len(rows) < len(pushed):
+        print("WARNING: STOPPED deploy -- %d of %d planned file(s) have a result row; the rest were never "
+              "attempted (stopped after consecutive errors, or still running). Re-launch to finish."
+              % (len(rows), len(pushed)))
     for rel, action, _card, status_ in rows:
         if action in ("conflict", "adopt", "deleted-on-card", "error") or status_ == "VERIFY-FAILED":
             print("  %-16s %s %s" % (action, rel, status_))
     if verified:
         base = manifest.read(BASELINE)
-        repo_md5 = {rel: md5 for rel, md5, _ in pending_all()}
         for rel in verified:
-            base[rel] = repo_md5[rel]
+            base[rel] = pushed[rel]
         manifest.write(BASELINE, base)
         print("baseline updated for %d verified push(es)" % len(verified))
+    if not args.partial:
+        mark_collected()
     print("results: %s\nbackup:  %s" % (result_path, tgz))
-
-
-def pending_all():
-    out = []
-    for dirpath, _, filenames in os.walk(os.path.join(MIRROR, "profile")):
-        for fn in filenames:
-            full = os.path.join(dirpath, fn)
-            rel = os.path.relpath(full, MIRROR).replace(os.sep, "/")
-            out.append((rel, hashlib.md5(open(full, "rb").read()).hexdigest(), None))
-    return out
 
 
 def main():
@@ -178,6 +220,8 @@ def main():
     l.add_argument("--dry-run", action="store_true")
     l.add_argument("--limit", type=int, default=0)
     l.add_argument("--only-new", action="store_true")
+    l.add_argument("--discard-previous", action="store_true",
+                   help="discard an uncollected (not a running) deploy on the box")
     sub.add_parser("status")
     c = sub.add_parser("collect")
     c.add_argument("--partial", action="store_true")
