@@ -4,6 +4,7 @@ What is worth pinning: the RTL1 frame codec (a wrong CRC or a bad resync
 silently corrupts an OSD dump or a file pull), reply-line splitting, OSD text
 rendering, and the tty resolver -- which must never hand back the PN532's port.
 """
+import contextlib
 import hashlib
 import importlib.util
 import io
@@ -351,6 +352,51 @@ class RawWriteGuardTest(unittest.TestCase):
             self.assertIsNone(rt4k_serial.raw_write_refusal("i2cw 1 2 3"))
         finally:
             del os.environ["RT4K_ALLOW_RAW_WRITE"]
+
+
+class DestructiveVerbGuardTest(unittest.TestCase):
+    """`rm`, `mv`, `fwup go` and friends delete or flash with no undo; the CLI
+    forwards text verbatim, so they take the same RT4K_ALLOW_RAW_WRITE=1 gate
+    as poke/fpga/i2cw."""
+
+    def setUp(self):
+        os.environ.pop("RT4K_ALLOW_RAW_WRITE", None)
+
+    def test_refuses_destructive_verbs(self):
+        for line in ("rm /profile/DV1/MENU.rt4", "mv /a|/b", "mv -f a|b", "fwup go 7487DE93",
+                     "FWUP GO x", "format", "del /x", "erase", "wipe", "flash", "reflash",
+                     "update", "upgrade", "fwupdate", "dfu", "reboot", "rm|/x", "ver\rrm /x", "ver\nrm /x"):
+            self.assertIsNotNone(rt4k_serial.raw_write_refusal(line), line)
+
+    def test_fwup_check_and_reads_pass(self):
+        for line in ("fwup check", "fwup", "ls /profile", "stat /x", "mkdir /x", "prof load DV1/MENU.rt4",
+                     "rmdir", "mvx", "formatting"):
+            self.assertIsNone(rt4k_serial.raw_write_refusal(line), line)
+
+    def test_env_escape_hatch(self):
+        os.environ["RT4K_ALLOW_RAW_WRITE"] = "1"
+        try:
+            self.assertIsNone(rt4k_serial.raw_write_refusal("rm /x"))
+            self.assertIsNone(rt4k_serial.raw_write_refusal("fwup go 1"))
+        finally:
+            del os.environ["RT4K_ALLOW_RAW_WRITE"]
+
+    def test_embedded_newline_is_refused_even_with_the_env(self):
+        os.environ["RT4K_ALLOW_RAW_WRITE"] = "1"
+        try:
+            self.assertIsNotNone(rt4k_serial.raw_write_refusal("ver\rrm /x"))
+        finally:
+            del os.environ["RT4K_ALLOW_RAW_WRITE"]
+
+    def test_dispatch_refuses_before_sending(self):
+        class Boom:
+            def command(self, *a, **k):
+                raise AssertionError("sent to the unit")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = rt4k_serial.dispatch(Boom(), ["rm", "/x"])
+        self.assertEqual(rc, 2)
+        self.assertIn("RT4K_ALLOW_RAW_WRITE=1", err.getvalue())
 
 
 class FetchRangedTest(unittest.TestCase):

@@ -18,12 +18,13 @@ file on stdin), so nothing has to be deployed to the card.
     scripts/rt4k-serial.py stat /profile/DV1/MENU.rt4
     scripts/rt4k-serial.py prof get               # loaded profile, relative to /profile
     scripts/rt4k-serial.py prof load DV1/MENU.rt4 # load a profile BY NAME
-    scripts/rt4k-serial.py rm /some/file          # exists; be careful
+    RT4K_ALLOW_RAW_WRITE=1 scripts/rt4k-serial.py rm /some/file   # destructive: gated
     scripts/rt4k-serial.py i2cr <addr> <reg>      # read one I2C register
     scripts/rt4k-serial.py i2crb <addr> <reg> <n> # burst read, n 1..128 (fw >= 1.99.2)
 
 `poke`, `fpga` and `i2cw` write the live settings block, FPGA registers and the
-unit's own I2C chips. They are refused unless RT4K_ALLOW_RAW_WRITE=1.
+unit's own I2C chips; `rm`, `mv`, `fwup go` and the other delete/flash verbs
+destroy card or firmware state. All are refused unless RT4K_ALLOW_RAW_WRITE=1.
 
 Protocol contract (from PIPe's serial-remote.js, verified on firmware 1.75.0):
 2,000,000 baud 8N1, hardware flow control, commands end in "\\r", replies are
@@ -836,17 +837,32 @@ def drop_lock(lock=None):
 # CLI forwards text verbatim, so one mistyped letter (`i2cr` -> `i2cw`) would
 # reach the unit's HDMI chips. Refused unless explicitly allowed.
 RAW_WRITES = ("poke", "fpga", "i2cw")
+# Verbs that delete, rename over, or flash with no undo (`rm` removes files and
+# empty dirs, `mv` renames, `fwup go <token>` flashes and reboots; the rest are
+# flash/erase words the firmware may accept). Same gate.
+DESTRUCTIVE = ("rm", "mv", "format", "del", "erase", "wipe", "update", "upgrade",
+               "fwupdate", "flash", "reflash", "dfu", "reboot")
 
 
 def raw_write_refusal(line):
     """Why `line` must not be sent, or None if it may be."""
-    words = line.split()
-    if not words or words[0].lower() not in RAW_WRITES:
+    if "\r" in line or "\n" in line:
+        # command() sends the line plus "\r": an embedded CR/LF is a second command
+        # whose verb this check would never see.
+        return "refusing a line with an embedded CR/LF: send one command per call."
+    words = line.replace("|", " ").split()
+    if not words:
+        return None
+    verb = words[0].lower()
+    if verb in RAW_WRITES:
+        what = "writes RT4K hardware/state directly"
+    elif verb in DESTRUCTIVE or (verb == "fwup" and len(words) > 1 and words[1].lower() == "go"):
+        what = "deletes, overwrites or flashes with no undo"
+    else:
         return None
     if os.environ.get("RT4K_ALLOW_RAW_WRITE") == "1":
         return None
-    return ("refusing `%s`: it writes RT4K hardware/state directly. "
-            "Set RT4K_ALLOW_RAW_WRITE=1 if you really mean it." % words[0])
+    return ("refusing `%s`: it %s. Set RT4K_ALLOW_RAW_WRITE=1 if you really mean it." % (words[0], what))
 
 
 def on_mister():

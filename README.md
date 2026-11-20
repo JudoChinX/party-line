@@ -117,7 +117,8 @@ tokenise on spaces.
 
 - One process at a time on the port. Every tool takes `/tmp/rt4k-serial.lock`,
   because two readers on one tty interleave and corrupt binary transfers.
-- `rt4k-serial.py rm` exists and does what it says.
+- `rm`, `mv`, `fwup go` and the other delete/flash verbs are refused by `rt4k-serial.py`
+  unless `RT4K_ALLOW_RAW_WRITE=1`, the same gate as `poke`, `fpga` and `i2cw`.
 - If a transfer is interrupted and the RT4K stops answering text commands,
   **wait about a minute**. It times out of binary mode on its own (`put timeout`).
   Don't power-cycle it.
