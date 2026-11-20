@@ -31,7 +31,7 @@ RT4K Pro, firmware 1.75.0–1.86.0.
 | `prof load <path>` | `prof load ok`. The path is relative to `/profile`, may contain spaces, and is case-insensitive |
 | `ls [<dir>]` | one `ent t=F\|D sz=<bytes> mt=<unix> nm=<name>` per entry, then `ls end <n>`. **Stops at 512 entries** (`ls truncated at 512`) |
 | `stat <path>` | `stat t=F sz=<n> mt=… nm=<path>` or `stat err=2 NOSUCH` |
-| `rm <path>` | `rm ok` |
+| `rm <path>` | `rm ok`. `rt4k-serial.py` refuses it unless `RT4K_ALLOW_RAW_WRITE=1` |
 | `input` / `output` | `input=0 HDMI ic=2 model=0` / `output sel=0 live=0 model=0` |
 | `snap` / `snap 1` / `snap 2` | Screenshots (fw 1.99.9). Bare: `snap state <s> row <r> lost <n>` (0 idle, 2 capturing). `1` captures the input picture and `2` the output picture to `/screenshots` as an uncompressed PNG, replying `snap: snap N.png <w>x<h>`, with no dialog. Any other argument is silent and the OSD shows "SCREENSHOT REFUSED" |
 | `banner`, `osd2 state` | the banner image path, and the secondary OSD plane's state |
@@ -39,6 +39,7 @@ RT4K Pro, firmware 1.75.0–1.86.0.
 | `struct` | `struct size=22876 poke_limit=22504 pad0=<n> ver=109`. `pad0` went 9652 → 9680 in 1.99.7 with `ver` unchanged, so compare the whole line after a firmware update |
 | `i2cr <addr> <reg>` / `i2crb <addr> <reg> <len>` | I2C register read / burst read, `len` 1..128 (`i2crb` since 1.99.2). Bare, each prints its usage line |
 | `poke`, `fpga`, `i2cw` | raw writes to the settings block, FPGA registers and I2C chips. `rt4k-serial.py` refuses them unless `RT4K_ALLOW_RAW_WRITE=1` |
+| `mv <a>\|<b>`, `fwup go`, and other deleting or flashing verbs | `rt4k-serial.py` refuses these too unless `RT4K_ALLOW_RAW_WRITE=1`, as well as any line with an embedded CR/LF |
 
 `get` wants `-- <path>`. Flags: `-a` (acknowledged, like `sget -a`), `-o <off> -l <len>` (a byte range). Large files need both: a plain `get` of several MB fails its CRC (FT232R overrun), and an ACKed one can still lose bytes inside a frame and stall, with no resend on NAK or re-ACK. `rt4k-serial.py get` reads 256 KB ACKed ranges, each SHA-checked and retried on its own. `ls`, `stat` and `rm` take the path bare.
 
